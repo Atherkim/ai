@@ -41,11 +41,11 @@ if st.button("답변 듣기") and user_input:
                 # 에러 발생 시 상세 원인 출력
                 st.error(f"Gemma 응답 오류: {response1.status_code} - {response1.text}")
             
-    # 두 번째 AI: 최신 Meta Llama 3.3 (70B 모델)
+    # 두 번째 AI: Mistral 7B (무료 모델)
     with col2:
-        st.subheader("Meta Llama 3.3")
+        st.subheader("Mistral 7B")
         data_llama = {
-            "model": "meta-llama/llama-3.3-70b-instruct:free",
+            "model": "mistralai/mistral-7b-instruct:free",
             "messages": [{"role": "user", "content": user_input}]
         }
         with st.spinner('Llama가 생각 중...'):

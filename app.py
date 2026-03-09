@@ -1,10 +1,36 @@
-# 🚨 1. API 호출 함수 수정: max_tokens(글자 수 제한) 기능 추가
+import streamlit as st
+import requests
+
+# 1. 페이지 기본 설정 및 디자인
+st.set_page_config(page_title="최적 AI 자동 매칭 서비스", layout="centered")
+st.title("🎯 최적 AI 자동 매칭 서비스")
+st.markdown("질문의 성격을 분석하여 **가장 전문적인 AI**를 연결해 드립니다.")
+
+# 2. API 키 보안 확인
+try:
+    API_KEY = st.secrets["OPENROUTER_API_KEY"]
+except KeyError:
+    st.error("API 키를 찾을 수 없습니다. Streamlit Settings -> Secrets에 OPENROUTER_API_KEY를 등록해주세요.")
+    st.stop()
+
+API_URL = "https://openrouter.ai/api/v1/chat/completions"
+
+# 3. 전문가 AI 프로필 정의 (순서 중요: 함수나 버튼보다 위에 있어야 함)
+EXPERTS = {
+    "CODE": {"name": "Google Gemma 3 (27B)", "id": "google/gemma-3-27b-it:free", "icon": "💻", "desc": "코딩 및 기술 문제"},
+    "CREATIVE": {"name": "Arcee Trinity", "id": "arcee-ai/trinity-large-preview:free", "icon": "🎨", "desc": "창의적 글쓰기 및 아이디어"},
+    "LOGIC": {"name": "NVIDIA Nemotron", "id": "nvidia/nemotron-3-nano-30b-a3b:free", "icon": "🧠", "desc": "수학, 퍼즐 및 논리적 추론"},
+    "GENERAL": {"name": "StepFun 3.5 Flash", "id": "stepfun/step-3.5-flash:free", "icon": "💬", "desc": "일반 상식 및 일상 대화"}
+}
+
+# 4. API 호출 함수 (max_tokens 지원)
 def call_openrouter(model_id, system_prompt, user_message, max_tokens=None):
     headers = {
         "Authorization": f"Bearer {API_KEY}",
         "Content-Type": "application/json"
     }
     
+    # 모든 모델 호환성을 위해 메시지 통합
     combined_message = f"{system_prompt}\n\n사용자 질문: {user_message}"
     
     data = {
@@ -13,71 +39,69 @@ def call_openrouter(model_id, system_prompt, user_message, max_tokens=None):
         "temperature": 0.3
     }
     
-    # max_tokens가 설정되어 있으면 데이터에 추가
     if max_tokens:
         data["max_tokens"] = max_tokens
         
-    resp = requests.post(API_URL, headers=headers, json=data)
-    if resp.status_code == 200:
-        return resp.json()['choices'][0]['message']['content'].strip(), None
-    else:
-        return None, f"[{model_id}] 오류 코드: {resp.status_code} \n상세 내용: {resp.text}"
+    try:
+        resp = requests.post(API_URL, headers=headers, json=data)
+        if resp.status_code == 200:
+            return resp.json()['choices'][0]['message']['content'].strip(), None
+        else:
+            return None, f"[{model_id}] 오류: {resp.status_code} - {resp.text}"
+    except Exception as e:
+        return None, f"통신 장애: {str(e)}"
 
-# 🚨 2. 버튼 클릭 부분 수정: 애니메이션(spinner) 및 속도 향상 적용
+# 5. 사용자 입력창 (버튼보다 반드시 먼저 위치해야 NameError가 안 납니다)
+user_input = st.text_input("질문을 입력하세요:", placeholder="예: 파이썬으로 이메일 발송 코드 짜줘")
+
+# 6. 실행 로직
 if st.button("질문하기") and user_input:
     
+    # 진행 상황을 보여줄 빈 공간 확보
     status_container = st.empty()
     
     with status_container.container():
-        # 📌 정적인 텍스트 대신, 움직이는 로딩 애니메이션(spinner) 적용
-        with st.spinner("🕵️‍♂️ 1단계: 안내원 AI가 질문을 분석 중입니다... (무료 서버 접속 대기 중 ⏳)"):
-            
+        # --- 1단계: 분류 (스피너 적용) ---
+        with st.spinner("🕵️‍♂️ 1단계: 안내원 AI가 질문을 분석 중입니다..."):
             router_prompt = """
-            너는 질문의 카테고리를 분류하는 안내원이야. 사용자의 질문을 읽고 다음 4가지 카테고리 중 딱 하나만 골라서 영단어로만 대답해. 다른 말은 절대 금지.
-            - CODE (프로그래밍, 코드 작성, 에러 해결, IT 기술)
-            - CREATIVE (소설, 시, 기획안, 이메일, 마케팅 문구 등 창작)
-            - LOGIC (수학 문제, 퍼즐, 논리적 증명)
-            - GENERAL (위 3개에 해당하지 않는 일반적인 질문, 번역, 요약, 잡담)
+            질문의 카테고리를 분류해줘. 단어 하나로만 대답해: CODE, CREATIVE, LOGIC, GENERAL
             """
-            
-            # max_tokens=10을 주어 분류가 끝나면 즉시 통신을 끊어 속도 확보
+            # 1단계는 짧게 대답하도록 강제 (속도 향상)
             category, error_msg1 = call_openrouter("stepfun/step-3.5-flash:free", router_prompt, user_input, max_tokens=10)
             
             if error_msg1:
-                st.error(f"🚨 1단계 분류 AI에서 통신 오류가 발생했습니다.\n\n{error_msg1}")
+                st.error(f"1단계 오류 발생:\n{error_msg1}")
                 st.stop()
-                
-            valid_categories = ["CODE", "CREATIVE", "LOGIC", "GENERAL"]
-            matched_category = "GENERAL"
             
-            for cat in valid_categories:
+            # 카테고리 매칭 (유연한 검색)
+            matched_category = "GENERAL"
+            for cat in EXPERTS.keys():
                 if cat in category.upper():
                     matched_category = cat
                     break
-                    
+            
             selected_ai = EXPERTS[matched_category]
-            
-        # 📌 2단계 넘어갈 때 로딩 애니메이션 텍스트 변경
-        with st.spinner(f"🚀 분류 완료! {selected_ai['icon']} 전문가 **{selected_ai['name']}**가 답변을 작성하고 있습니다... ✍️"):
-            
+
+        # --- 2단계: 답변 생성 (스피너 업데이트) ---
+        with st.spinner(f"🚀 {selected_ai['icon']} 전문가 **{selected_ai['name']}**가 답변을 작성 중입니다..."):
             final_answer, error_msg2 = call_openrouter(
                 selected_ai['id'], 
-                f"너는 {selected_ai['desc']} 분야의 최고 전문가야. 아주 논리적이고 정확하게 답변해줘.", 
+                f"너는 {selected_ai['desc']} 전문가야. 정확하게 답변해줘.", 
                 user_input
-                # 2단계는 긴 답변을 해야 하므로 max_tokens를 걸지 않습니다.
             )
             
             if error_msg2:
-                st.error(f"🚨 2단계 전문가 AI({selected_ai['name']})에서 통신 오류가 발생했습니다.\n\n{error_msg2}")
+                st.error(f"2단계 오류 발생:\n{error_msg2}")
                 st.stop()
             
-    # 에러 없이 완료되면 임시 공간 지우기
+    # 모든 작업 완료 시 로딩 메시지 삭제
     status_container.empty()
     
-    # 최종 결과 화면 출력
+    # 7. 최종 결과 출력
     st.subheader(f"{selected_ai['icon']} {selected_ai['name']}의 답변")
     st.markdown(final_answer)
     st.divider()
     
-    st.caption("👇 전체 답변 복사하기")
+    # 8. 복사 기능 (코드 블록 활용)
+    st.caption("👇 전체 답변 복사하기 (우측 상단 아이콘 클릭)")
     st.code(final_answer, language="markdown")

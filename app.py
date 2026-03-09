@@ -3,7 +3,7 @@ import requests
 
 st.set_page_config(page_title="AI 전문가 패널 토론", layout="wide")
 st.title("⚖️ AI 전문가 패널 & 마스터 비평가")
-st.markdown("4명의 전문가가 의견을 내고, 마스터 비평가가 합의점을 도출합니다.")
+st.markdown("가장 안정적인 4명의 AI 전문가가 의견을 내고, 마스터 비평가가 합의점을 도출합니다.")
 
 try:
     API_KEY = st.secrets["OPENROUTER_API_KEY"]
@@ -13,12 +13,12 @@ except KeyError:
 
 API_URL = "https://openrouter.ai/api/v1/chat/completions"
 
-# [안정성이 검증된 튼튼한 패널 4인방으로 전면 교체]
+# [가장 안정적인 1군 무료 모델 4인방 세팅]
 PANEL = [
-    {"name": "Google Gemma 3 (4B)", "id": "google/gemma-3-4b-it:free", "role": "논리/분석 전문가"},
+    {"name": "Microsoft Phi-3 Mini", "id": "microsoft/phi-3-mini-128k-instruct:free", "role": "논리/분석 전문가"},
     {"name": "Mistral 7B", "id": "mistralai/mistral-7b-instruct:free", "role": "기술/수학 전문가"},
-    {"name": "Arcee Trinity", "id": "arcee-ai/trinity-large-preview:free", "role": "창의/인문 전문가"},
-    {"name": "StepFun 3.5", "id": "stepfun/step-3.5-flash:free", "role": "실용/일반 전문가"}
+    {"name": "Qwen 2 (7B)", "id": "qwen/qwen-2-7b-instruct:free", "role": "창의/인문 전문가"},
+    {"name": "Google Gemma 3 (4B)", "id": "google/gemma-3-4b-it:free", "role": "실용/일반 전문가"}
 ]
 
 def call_ai(model_id, prompt, user_msg):
@@ -46,7 +46,7 @@ if "panel_answers" not in st.session_state:
 if "master_summary" not in st.session_state:
     st.session_state.master_summary = None
 
-user_input = st.text_input("토론 주제를 입력하세요:", placeholder="예: 무인 자동차의 도덕적 책임은 누구에게 있는가?")
+user_input = st.text_input("토론 주제를 입력하세요:", placeholder="예: 인공지능이 예술을 대체할 수 있을까?")
 
 # [1단계 버튼] 전문가 토론 시작
 if st.button("전문가 패널 토론 시작") and user_input:
@@ -89,11 +89,11 @@ if st.session_state.panel_answers:
             for name, ans in st.session_state.panel_answers.items():
                 critique_prompt += f"[{name}의 의견]: {ans}\n\n"
             
-            # 🚨 비평가 전용 3중 자동 백업(Failover) 시스템 도입
+            # 🚨 가장 튼튼한 모델들로 비평가 백업 리스트 구성
             CRITIC_MODELS = [
-                "google/gemma-3-4b-it:free",          # 1순위 비평가
-                "mistralai/mistral-7b-instruct:free", # 2순위 비평가
-                "stepfun/step-3.5-flash:free"         # 3순위 비평가
+                "google/gemma-3-4b-it:free",
+                "microsoft/phi-3-mini-128k-instruct:free",
+                "mistralai/mistral-7b-instruct:free"
             ]
             
             summary_ans, summary_err = None, None
@@ -101,10 +101,9 @@ if st.session_state.panel_answers:
             for critic in CRITIC_MODELS:
                 summary_ans, summary_err = call_ai(critic, critique_prompt, f"주제: {user_input}\n위 내용들을 종합해줘.")
                 if summary_ans:
-                    break # 성공하면 즉시 비평가 탐색 종료
+                    break # 성공하면 반복문 즉시 탈출
                 else:
-                    # 실패할 경우 화면에 어떤 비평가가 실패했는지 짧게 안내하고 다음으로 넘어감
-                    st.warning(f"⚠️ {critic.split('/')[1]} 서버 과부하. 다음 비평가에게 서류를 넘깁니다...")
+                    st.warning(f"⚠️ {critic.split('/')[1]} 지연. 다음 비평가에게 서류를 넘깁니다...")
             
             if summary_ans:
                 st.session_state.master_summary = summary_ans

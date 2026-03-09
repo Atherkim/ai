@@ -13,14 +13,14 @@ except KeyError:
 
 API_URL = "https://openrouter.ai/api/v1/chat/completions"
 
+# [안정성이 검증된 튼튼한 패널 4인방으로 전면 교체]
 PANEL = [
-    {"name": "Google Gemma 3", "id": "google/gemma-3-27b-it:free", "role": "논리/분석 전문가"},
-    {"name": "NVIDIA Nemotron", "id": "nvidia/nemotron-3-nano-30b-a3b:free", "role": "기술/수학 전문가"},
+    {"name": "Google Gemma 3 (4B)", "id": "google/gemma-3-4b-it:free", "role": "논리/분석 전문가"},
+    {"name": "Mistral 7B", "id": "mistralai/mistral-7b-instruct:free", "role": "기술/수학 전문가"},
     {"name": "Arcee Trinity", "id": "arcee-ai/trinity-large-preview:free", "role": "창의/인문 전문가"},
     {"name": "StepFun 3.5", "id": "stepfun/step-3.5-flash:free", "role": "실용/일반 전문가"}
 ]
 
-# 🚨 수정됨: 진짜 답변(content)과 에러 메시지(error_msg)를 확실하게 나누어 반환합니다.
 def call_ai(model_id, prompt, user_msg):
     headers = {"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"}
     data = {
@@ -37,7 +37,7 @@ def call_ai(model_id, prompt, user_msg):
             else:
                 return None, "빈 답변 도착"
         else:
-            return None, f"에러 {resp.status_code}" # 429 등의 에러는 여기서 걸러집니다.
+            return None, f"에러 {resp.status_code}"
     except Exception as e:
         return None, f"통신 장애: {str(e)}"
 
@@ -59,28 +59,24 @@ if st.button("전문가 패널 토론 시작") and user_input:
             with st.spinner(f"🎤 {ai['name']} 대기 중..."):
                 answer, err = call_ai(ai['id'], f"너는 {ai['role']}야. 질문에 대해 너의 관점에서 깊이 있게 답변해줘.", user_input)
                 
-                # 🚨 수정됨: 에러가 없을 때만 성공 처리, 에러 시 붉은색 경고 출력
                 if answer:
                     st.session_state.panel_answers[ai['name']] = answer
                     st.success(f"**{ai['name']} 완료**")
                 else:
                     st.error(f"**{ai['name']} 실패**")
-                    st.caption(err) # 실패 원인(예: 에러 429)을 작게 표시
+                    st.caption(err)
 
-# 결과 화면 렌더링 (성공한 데이터만 출력)
 if st.session_state.panel_answers:
     st.markdown("### 💬 전문가 4인의 개별 의견")
     
     cols = st.columns(4)
     for i, ai in enumerate(PANEL):
         with cols[i]:
-            # 성공해서 메모리에 데이터가 있는 AI만 펼쳐보기를 활성화합니다.
             if ai['name'] in st.session_state.panel_answers:
                 st.info(f"**{ai['role']}**\n\n{ai['name']}")
                 with st.expander("전체 답변 읽기 ⬇️"):
                     st.write(st.session_state.panel_answers[ai['name']])
             else:
-                # 실패한 AI는 빈자리로 남겨두어 혼선을 방지합니다.
                 st.warning(f"**{ai['role']}**\n\n{ai['name']} (참여 실패)")
     
     st.divider()
@@ -93,13 +89,27 @@ if st.session_state.panel_answers:
             for name, ans in st.session_state.panel_answers.items():
                 critique_prompt += f"[{name}의 의견]: {ans}\n\n"
             
-            # 마스터 비평가 호출 (여기서도 에러 분리 로직 적용)
-            summary_ans, summary_err = call_ai("google/gemma-3-27b-it:free", critique_prompt, f"주제: {user_input}\n위 내용들을 종합해줘.")
+            # 🚨 비평가 전용 3중 자동 백업(Failover) 시스템 도입
+            CRITIC_MODELS = [
+                "google/gemma-3-4b-it:free",          # 1순위 비평가
+                "mistralai/mistral-7b-instruct:free", # 2순위 비평가
+                "stepfun/step-3.5-flash:free"         # 3순위 비평가
+            ]
+            
+            summary_ans, summary_err = None, None
+            
+            for critic in CRITIC_MODELS:
+                summary_ans, summary_err = call_ai(critic, critique_prompt, f"주제: {user_input}\n위 내용들을 종합해줘.")
+                if summary_ans:
+                    break # 성공하면 즉시 비평가 탐색 종료
+                else:
+                    # 실패할 경우 화면에 어떤 비평가가 실패했는지 짧게 안내하고 다음으로 넘어감
+                    st.warning(f"⚠️ {critic.split('/')[1]} 서버 과부하. 다음 비평가에게 서류를 넘깁니다...")
             
             if summary_ans:
                 st.session_state.master_summary = summary_ans
             else:
-                st.error(f"🚨 마스터 비평가 연결 실패: {summary_err}")
+                st.error(f"🚨 모든 마스터 비평가 연결 실패: {summary_err}")
 
     if st.session_state.master_summary:
         st.success("### 📝 마스터 비평가의 종합 분석 리포트")

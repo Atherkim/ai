@@ -22,17 +22,20 @@ EXPERTS = {
 
 user_input = st.text_input("질문을 입력하세요:", placeholder="예: 파이썬으로 테트리스 게임 만드는 코드 짜줘")
 
-# 에러 메시지까지 함께 반환하도록 함수 수정
+# 🚨 수정된 부분: system과 user 메시지를 하나로 합쳐서 전송 (호환성 100%)
 def call_openrouter(model_id, system_prompt, user_message):
     headers = {
         "Authorization": f"Bearer {API_KEY}",
         "Content-Type": "application/json"
     }
+    
+    # AI에게 줄 역할(system_prompt)과 실제 질문(user_message)을 하나의 텍스트로 결합
+    combined_message = f"{system_prompt}\n\n사용자 질문: {user_message}"
+    
     data = {
         "model": model_id,
         "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_message}
+            {"role": "user", "content": combined_message}
         ],
         "temperature": 0.3
     }
@@ -40,7 +43,6 @@ def call_openrouter(model_id, system_prompt, user_message):
     if resp.status_code == 200:
         return resp.json()['choices'][0]['message']['content'].strip(), None
     else:
-        # 실패 시 에러 코드와 상세 내용을 반환
         return None, f"[{model_id}] 오류 코드: {resp.status_code} \n상세 내용: {resp.text}"
 
 if st.button("질문하기") and user_input:
@@ -58,35 +60,10 @@ if st.button("질문하기") and user_input:
         - GENERAL (위 3개에 해당하지 않는 일반적인 질문, 번역, 요약, 잡담)
         """
         
-        # 1단계 API 호출
         category, error_msg1 = call_openrouter("stepfun/step-3.5-flash:free", router_prompt, user_input)
         
         if error_msg1:
             st.error(f"🚨 1단계 분류 AI에서 통신 오류가 발생했습니다.\n\n{error_msg1}")
-            st.stop() # 여기서 프로그램 즉시 정지
+            st.stop()
             
-        if category not in EXPERTS:
-            category = "GENERAL"
-            
-        selected_ai = EXPERTS[category]
-        st.success(f"🚀 분류 완료! {selected_ai['icon']} 전문가 **{selected_ai['name']}**가 답변을 작성 중입니다...")
-        
-        # 2단계 API 호출
-        final_answer, error_msg2 = call_openrouter(
-            selected_ai['id'], 
-            f"너는 {selected_ai['desc']} 분야의 최고 전문가야. 전문적이고 정확하게 답변해줘.", 
-            user_input
-        )
-        
-        if error_msg2:
-            st.error(f"🚨 2단계 전문가 AI({selected_ai['name']})에서 통신 오류가 발생했습니다.\n\n{error_msg2}")
-            st.stop() # 여기서 프로그램 즉시 정지
-            
-    # 에러 없이 무사히 통과했다면 임시 공간 지우고 결과 출력
-    status_container.empty()
-    
-    st.subheader(f"{selected_ai['icon']} {selected_ai['name']}의 답변")
-    st.markdown(final_answer)
-    st.divider()
-    st.caption("👇 전체 답변 복사하기")
-    st.code(final_answer, language="markdown")
+        # AI가 이상한 대답을 했을 경우를 대비한

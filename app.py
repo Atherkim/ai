@@ -1,103 +1,98 @@
 import streamlit as st
 import requests
+import time
 
+# 1. 페이지 설정
 st.set_page_config(page_title="최적 AI 자동 매칭 서비스", layout="centered")
-st.title("🎯 최적 AI 자동 매칭 서비스")
-st.markdown("질문의 성격을 분석하여 **가장 전문적인 AI**를 연결해 드립니다.")
+st.title("🎯 스마트 AI 자동 매칭 (무한 복구 버전)")
+st.markdown("안내원 AI가 바쁘면 **예비 안내원**이 즉시 투입되어 중단 없이 작동합니다.")
 
+# 2. 보안 및 설정
 try:
     API_KEY = st.secrets["OPENROUTER_API_KEY"]
 except KeyError:
-    st.error("API 키를 찾을 수 없습니다. Streamlit Settings -> Secrets에 OPENROUTER_API_KEY를 등록해주세요.")
+    st.error("API 키를 등록해주세요.")
     st.stop()
 
 API_URL = "https://openrouter.ai/api/v1/chat/completions"
 
+# 전문가 군단
 EXPERTS = {
-    "CODE": {"name": "Google Gemma 3 (27B)", "id": "google/gemma-3-27b-it:free", "icon": "💻", "desc": "코딩 및 기술 문제"},
-    "CREATIVE": {"name": "Arcee Trinity", "id": "arcee-ai/trinity-large-preview:free", "icon": "🎨", "desc": "창의적 글쓰기 및 아이디어"},
-    "LOGIC": {"name": "NVIDIA Nemotron", "id": "nvidia/nemotron-3-nano-30b-a3b:free", "icon": "🧠", "desc": "수학, 퍼즐 및 논리적 추론"},
-    "GENERAL": {"name": "StepFun 3.5 Flash", "id": "stepfun/step-3.5-flash:free", "icon": "💬", "desc": "일반 상식 및 일상 대화"}
+    "CODE": {"name": "Google Gemma 3 (27B)", "id": "google/gemma-3-27b-it:free", "icon": "💻", "desc": "코딩 및 기술"},
+    "CREATIVE": {"name": "Arcee Trinity", "id": "arcee-ai/trinity-large-preview:free", "icon": "🎨", "desc": "창작 및 아이디어"},
+    "LOGIC": {"name": "NVIDIA Nemotron", "id": "nvidia/nemotron-3-nano-30b-a3b:free", "icon": "🧠", "desc": "논리 및 수학"},
+    "GENERAL": {"name": "StepFun 3.5 Flash", "id": "stepfun/step-3.5-flash:free", "icon": "💬", "desc": "일반 대화"}
 }
 
+# 예비 안내원 리스트 (1번이 바쁘면 2번, 2번이 바쁘면 3번...)
+ROUTER_MODELS = [
+    "stepfun/step-3.5-flash:free",
+    "google/gemma-3-4b-it:free",
+    "meta-llama/llama-3.2-3b-instruct:free"
+]
+
 def call_openrouter(model_id, system_prompt, user_message, max_tokens=None):
-    headers = {
-        "Authorization": f"Bearer {API_KEY}",
-        "Content-Type": "application/json"
-    }
-    
+    headers = {"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"}
     combined_message = f"{system_prompt}\n\n사용자 질문: {user_message}"
-    
     data = {
         "model": model_id,
         "messages": [{"role": "user", "content": combined_message}],
-        "temperature": 0.3
+        "temperature": 0.1 # 분류의 정확도를 위해 낮춤
     }
-    
-    if max_tokens:
-        data["max_tokens"] = max_tokens
+    if max_tokens: data["max_tokens"] = max_tokens
         
     try:
-        resp = requests.post(API_URL, headers=headers, json=data, timeout=30)
+        resp = requests.post(API_URL, headers=headers, json=data, timeout=20)
         if resp.status_code == 200:
-            result = resp.json()
-            # 🚨 핵심 수정: content가 None이거나 없을 경우를 대비해 기본값 "" 설정
-            content = result.get('choices', [{}])[0].get('message', {}).get('content')
-            
-            if content is None:
-                return None, f"[{model_id}] 서버가 빈 답변을 보냈습니다. 다시 시도해 주세요."
-            
-            return content.strip(), None
-        else:
-            return None, f"[{model_id}] 오류: {resp.status_code} - {resp.text}"
+            content = resp.json().get('choices', [{}])[0].get('message', {}).get('content')
+            return (content.strip(), None) if content else (None, "빈 답변")
+        return None, f"에러 {resp.status_code}"
     except Exception as e:
-        return None, f"통신 장애 발생: {str(e)}"
+        return None, str(e)
 
-user_input = st.text_input("질문을 입력하세요:", placeholder="예: 파이썬으로 이메일 발송 코드 짜줘")
+user_input = st.text_input("질문을 입력하세요:", placeholder="예: 파이썬으로 가계부 프로그램 짜줘")
 
 if st.button("질문하기") and user_input:
     status_container = st.empty()
+    final_category = None
     
     with status_container.container():
-        # --- 1단계: 분류 ---
-        with st.spinner("🕵️‍♂️ 1단계: 안내원 AI가 질문을 분석 중입니다..."):
-            router_prompt = "질문의 카테고리를 분류해줘. 단어 하나로만 대답해: CODE, CREATIVE, LOGIC, GENERAL"
-            
-            category, error_msg1 = call_openrouter("stepfun/step-3.5-flash:free", router_prompt, user_input, max_tokens=10)
-            
-            if error_msg1:
-                st.error(f"1단계 오류 발생: {error_msg1}")
-                st.stop()
-            
-            # 🚨 2차 방어: category 자체가 비어있을 경우 예외 처리
-            if not category:
-                category = "GENERAL"
-            
-            matched_category = "GENERAL"
-            for cat in EXPERTS.keys():
-                if cat in category.upper():
-                    matched_category = cat
-                    break
-            
-            selected_ai = EXPERTS[matched_category]
+        # --- 1단계: 자동 복구형 분류 시스템 ---
+        for i, model in enumerate(ROUTER_MODELS):
+            with st.spinner(f"🕵️‍♂️ {i+1}번 안내원({model.split('/')[1]})에게 질문 분석을 요청 중..."):
+                router_prompt = "질문을 딱 한 단어로만 분류해: CODE, CREATIVE, LOGIC, GENERAL"
+                category, err = call_openrouter(model, router_prompt, user_input, max_tokens=10)
+                
+                if category:
+                    # 유효성 검사
+                    for key in EXPERTS.keys():
+                        if key in category.upper():
+                            final_category = key
+                            break
+                    if final_category: break # 분류 성공 시 루프 탈출
+                
+                st.warning(f"⚠️ {i+1}번 안내원이 바쁩니다. 다음 안내원을 호출합니다...")
+                time.sleep(1) # 서버 과부하 방지를 위한 짧은 휴식
 
-        # --- 2단계: 답변 생성 ---
-        with st.spinner(f"🚀 {selected_ai['icon']} 전문가 **{selected_ai['name']}**가 답변을 작성 중입니다..."):
-            final_answer, error_msg2 = call_openrouter(
-                selected_ai['id'], 
-                f"너는 {selected_ai['desc']} 전문가야. 정확하게 답변해줘.", 
-                user_input
-            )
+        if not final_category:
+            st.error("🚨 모든 안내원 AI가 현재 응답 불가능 상태입니다. 잠시 후 다시 시도해주세요.")
+            st.stop()
             
-            if error_msg2:
-                st.error(f"2단계 오류 발생: {error_msg2}")
+        selected_ai = EXPERTS[final_category]
+        
+        # --- 2단계: 전문가 답변 생성 ---
+        with st.spinner(f"🚀 {selected_ai['icon']} 전문가 **{selected_ai['name']}**가 답변을 작성 중..."):
+            answer, err = call_openrouter(selected_ai['id'], f"너는 {selected_ai['desc']} 전문가야.", user_input)
+            
+            if err:
+                st.error(f"🚨 전문가 연결 실패: {err}")
                 st.stop()
-            
+
     status_container.empty()
     
-    if final_answer:
-        st.subheader(f"{selected_ai['icon']} {selected_ai['name']}의 답변")
-        st.markdown(final_answer)
-        st.divider()
-        st.caption("👇 전체 답변 복사하기")
-        st.code(final_answer, language="markdown")
+    # 결과 출력
+    st.subheader(f"{selected_ai['icon']} {selected_ai['name']}의 답변")
+    st.markdown(answer)
+    st.divider()
+    st.caption("👇 복사하려면 아래 아이콘을 클릭하세요")
+    st.code(answer, language="markdown")

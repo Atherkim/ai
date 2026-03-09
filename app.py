@@ -22,6 +22,7 @@ EXPERTS = {
 
 user_input = st.text_input("질문을 입력하세요:", placeholder="예: 파이썬으로 테트리스 게임 만드는 코드 짜줘")
 
+# 에러 메시지까지 함께 반환하도록 함수 수정
 def call_openrouter(model_id, system_prompt, user_message):
     headers = {
         "Authorization": f"Bearer {API_KEY}",
@@ -37,18 +38,17 @@ def call_openrouter(model_id, system_prompt, user_message):
     }
     resp = requests.post(API_URL, headers=headers, json=data)
     if resp.status_code == 200:
-        return resp.json()['choices'][0]['message']['content'].strip()
+        return resp.json()['choices'][0]['message']['content'].strip(), None
     else:
-        return None
+        # 실패 시 에러 코드와 상세 내용을 반환
+        return None, f"[{model_id}] 오류 코드: {resp.status_code} \n상세 내용: {resp.text}"
 
 if st.button("질문하기") and user_input:
     
-    # 1. 과정 출력을 위한 '임시 공간' 만들기
     status_container = st.empty()
     
-    # 임시 공간 안에 진행 상황 띄우기
     with status_container.container():
-        st.info("🕵️‍♂️ 안내원 AI가 질문의 의도를 파악하고 있습니다... (약 2~3초 소요)")
+        st.info("🕵️‍♂️ 1단계: 안내원 AI가 질문의 의도를 파악하고 있습니다...")
         
         router_prompt = """
         너는 질문의 카테고리를 분류하는 안내원이야. 사용자의 질문을 읽고 다음 4가지 카테고리 중 딱 하나만 골라서 영단어로만 대답해. 다른 말은 절대 금지.
@@ -57,38 +57,36 @@ if st.button("질문하기") and user_input:
         - LOGIC (수학 문제, 퍼즐, 논리적 증명)
         - GENERAL (위 3개에 해당하지 않는 일반적인 질문, 번역, 요약, 잡담)
         """
-        category = call_openrouter("stepfun/step-3.5-flash:free", router_prompt, user_input)
         
+        # 1단계 API 호출
+        category, error_msg1 = call_openrouter("stepfun/step-3.5-flash:free", router_prompt, user_input)
+        
+        if error_msg1:
+            st.error(f"🚨 1단계 분류 AI에서 통신 오류가 발생했습니다.\n\n{error_msg1}")
+            st.stop() # 여기서 프로그램 즉시 정지
+            
         if category not in EXPERTS:
             category = "GENERAL"
             
         selected_ai = EXPERTS[category]
+        st.success(f"🚀 분류 완료! {selected_ai['icon']} 전문가 **{selected_ai['name']}**가 답변을 작성 중입니다...")
         
-        # 안내 메시지 업데이트
-        st.success(f"🚀 분류 완료! {selected_ai['icon']} 전문가 **{selected_ai['name']}**가 답변을 작성 중입니다... (약 10~20초 소요)")
-        
-        # 최종 답변 생성
-        final_answer = call_openrouter(
+        # 2단계 API 호출
+        final_answer, error_msg2 = call_openrouter(
             selected_ai['id'], 
             f"너는 {selected_ai['desc']} 분야의 최고 전문가야. 전문적이고 정확하게 답변해줘.", 
             user_input
         )
         
-    # 2. 작업이 끝났으므로 '임시 공간'을 완전히 삭제하여 화면을 깨끗하게 정리!
+        if error_msg2:
+            st.error(f"🚨 2단계 전문가 AI({selected_ai['name']})에서 통신 오류가 발생했습니다.\n\n{error_msg2}")
+            st.stop() # 여기서 프로그램 즉시 정지
+            
+    # 에러 없이 무사히 통과했다면 임시 공간 지우고 결과 출력
     status_container.empty()
     
-    # 3. 깨끗해진 화면에 최종 결과 및 복사 버튼 출력
-    if final_answer:
-        st.subheader(f"{selected_ai['icon']} {selected_ai['name']}의 답변")
-        
-        # 일반적인 텍스트 형태로 읽기 좋게 출력
-        st.markdown(final_answer)
-        
-        st.divider() # 구분선
-        
-        # 원클릭 복사 기능 제공 (우측 상단 아이콘)
-        st.caption("👇 전체 답변을 한 번에 복사하려면 아래 박스 우측 상단의 아이콘을 클릭하세요.")
-        st.code(final_answer, language="markdown")
-        
-    else:
-        st.error("답변을 받아오는 중 통신 오류가 발생했습니다. 다시 시도해 주세요.")
+    st.subheader(f"{selected_ai['icon']} {selected_ai['name']}의 답변")
+    st.markdown(final_answer)
+    st.divider()
+    st.caption("👇 전체 답변 복사하기")
+    st.code(final_answer, language="markdown")

@@ -13,7 +13,6 @@ except KeyError:
 
 API_URL = "https://openrouter.ai/api/v1/chat/completions"
 
-# 전문가 AI 리스트 정의
 EXPERTS = {
     "CODE": {"name": "Google Gemma 3 (27B)", "id": "google/gemma-3-27b-it:free", "icon": "💻", "desc": "코딩 및 기술 문제"},
     "CREATIVE": {"name": "Arcee Trinity", "id": "arcee-ai/trinity-large-preview:free", "icon": "🎨", "desc": "창의적 글쓰기 및 아이디어"},
@@ -23,7 +22,6 @@ EXPERTS = {
 
 user_input = st.text_input("질문을 입력하세요:", placeholder="예: 파이썬으로 테트리스 게임 만드는 코드 짜줘")
 
-# API 호출 공통 함수
 def call_openrouter(model_id, system_prompt, user_message):
     headers = {
         "Authorization": f"Bearer {API_KEY}",
@@ -35,7 +33,7 @@ def call_openrouter(model_id, system_prompt, user_message):
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_message}
         ],
-        "temperature": 0.3 # 분류의 정확도를 높이기 위해 창의성 낮춤
+        "temperature": 0.3
     }
     resp = requests.post(API_URL, headers=headers, json=data)
     if resp.status_code == 200:
@@ -45,11 +43,13 @@ def call_openrouter(model_id, system_prompt, user_message):
 
 if st.button("질문하기") and user_input:
     
-    # 처리 과정을 사용자에게 예쁘게 보여주는 UI
-    with st.status("로봇이 질문을 분석하고 있습니다...", expanded=True) as status:
+    # 1. 과정 출력을 위한 '임시 공간' 만들기
+    status_container = st.empty()
+    
+    # 임시 공간 안에 진행 상황 띄우기
+    with status_container.container():
+        st.info("🕵️‍♂️ 안내원 AI가 질문의 의도를 파악하고 있습니다... (약 2~3초 소요)")
         
-        # [1단계] 안내원 AI가 질문 성격 분류하기
-        st.write("🕵️‍♂️ 안내원 AI가 질문의 의도를 파악하는 중...")
         router_prompt = """
         너는 질문의 카테고리를 분류하는 안내원이야. 사용자의 질문을 읽고 다음 4가지 카테고리 중 딱 하나만 골라서 영단어로만 대답해. 다른 말은 절대 금지.
         - CODE (프로그래밍, 코드 작성, 에러 해결, IT 기술)
@@ -59,21 +59,36 @@ if st.button("질문하기") and user_input:
         """
         category = call_openrouter("stepfun/step-3.5-flash:free", router_prompt, user_input)
         
-        # 혹시 AI가 엉뚱한 대답을 하면 기본값(GENERAL)으로 설정
         if category not in EXPERTS:
             category = "GENERAL"
             
         selected_ai = EXPERTS[category]
-        st.write(f"{selected_ai['icon']} **분류 완료!** 이 질문은 **[{selected_ai['desc']}]**에 해당합니다.")
-        st.write(f"🚀 최적의 전문가 **{selected_ai['name']}**(에게 질문을 전달합니다...")
         
-        # [2단계] 선택된 전문가 AI에게 답변 받아오기
+        # 안내 메시지 업데이트
+        st.success(f"🚀 분류 완료! {selected_ai['icon']} 전문가 **{selected_ai['name']}**가 답변을 작성 중입니다... (약 10~20초 소요)")
+        
+        # 최종 답변 생성
         final_answer = call_openrouter(
             selected_ai['id'], 
             f"너는 {selected_ai['desc']} 분야의 최고 전문가야. 전문적이고 정확하게 답변해줘.", 
             user_input
         )
         
-        status.update(label="답변 생성이 완료되었습니다!", state="complete", expanded=False)
+    # 2. 작업이 끝났으므로 '임시 공간'을 완전히 삭제하여 화면을 깨끗하게 정리!
+    status_container.empty()
+    
+    # 3. 깨끗해진 화면에 최종 결과 및 복사 버튼 출력
+    if final_answer:
+        st.subheader(f"{selected_ai['icon']} {selected_ai['name']}의 답변")
         
-    # [3단계]
+        # 일반적인 텍스트 형태로 읽기 좋게 출력
+        st.markdown(final_answer)
+        
+        st.divider() # 구분선
+        
+        # 원클릭 복사 기능 제공 (우측 상단 아이콘)
+        st.caption("👇 전체 답변을 한 번에 복사하려면 아래 박스 우측 상단의 아이콘을 클릭하세요.")
+        st.code(final_answer, language="markdown")
+        
+    else:
+        st.error("답변을 받아오는 중 통신 오류가 발생했습니다. 다시 시도해 주세요.")
